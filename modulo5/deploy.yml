@@ -1,0 +1,66 @@
+name: CI/CD - VOD Platform
+
+on:
+  push:
+    branches:
+      - main  # Ejecuta solo en rama main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. Clona el repositorio
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    # 2. Configura credenciales de AWS (requiere secretos configurados)
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+
+    # 3. Configura Terraform CLI
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.5.5
+
+    # 4. Inicializa Terraform (descarga plugins, prepara estado)
+    - name: Terraform Init
+      run: terraform init
+
+    # 5. Planifica cambios en la infraestructura
+    - name: Terraform Plan
+      run: terraform plan
+
+    # 6. Aplica cambios automáticamente
+    - name: Terraform Apply
+      run: terraform apply -auto-approve
+
+    # 7. Login a Amazon ECR (repositorio de contenedores)
+    - name: Login to Amazon ECR
+      uses: aws-actions/amazon-ecr-login@v1
+
+    # 8. Construye y sube la imagen Docker del backend
+    - name: Build and Push Docker Image
+      run: |
+        IMAGE_URI="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/vod-backend:latest"
+        docker build -t vod-backend .
+        docker tag vod-backend:latest $IMAGE_URI
+        docker push $IMAGE_URI
+
+    # 9. Configura acceso al cluster EKS
+    - name: Configure kubeconfig
+      run: |
+        aws eks update-kubeconfig --name vod-cluster --region us-east-1
+
+    # 10. Despliega los manifiestos de Kubernetes (k8s/)
+    - name: Deploy to EKS
+      run: |
+        kubectl apply -f k8s/
